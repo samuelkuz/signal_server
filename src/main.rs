@@ -14,23 +14,27 @@ use crate::signal_message::SignalMessage;
 
 type Result<T> = std::result::Result<T, Error>;
 
-// struct Connection {
-//     ice_candidates: Vec<String>,
-// }
-
 #[derive(Debug)]
 struct Session {
+    // Caller Info
     pub offer: Option<String>,
+    pub caller_ws: Option<SplitSink<WebSocketStream<TcpStream>, Message>>,
     pub caller_ice_candidates: Vec<String>,
-    // Caller websocket?
-    // Peer  websocket?
+    // Peer Info
+    pub answer: Option<String>,
+    pub peer_ws: Option<SplitSink<WebSocketStream<TcpStream>, Message>>,
+    pub peer_ice_candidates: Vec<String>,
 }
 
 impl Session {
     pub fn new(offer: String) -> Self {
         Session {
             offer: Some(offer),
+            caller_ws: None,
             caller_ice_candidates: Vec::new(),
+            answer: None,
+            peer_ws: None,
+            peer_ice_candidates: Vec::new(),
         }
     }
 }
@@ -48,7 +52,7 @@ impl SignalState {
     }
 }
 
-async fn handle_message(signal_state: Arc<Mutex<SignalState>>, message: String, ws: &mut SplitSink<WebSocketStream<TcpStream>, Message>) -> Result<()> {
+async fn handle_message(signal_state: Arc<Mutex<SignalState>>, message: String) -> Result<()> {
     let signal_message: SignalMessage = serde_json::from_str(message.as_str())?;
 
     match signal_message {
@@ -65,28 +69,24 @@ async fn handle_message(signal_state: Arc<Mutex<SignalState>>, message: String, 
         },
         SignalMessage::Answer { id, sdp } => {
 
+
         },
         SignalMessage::CallerIceCandidate { id, ice_candidate } => {
             let mut current_state = signal_state.lock().await;
             
             if let Some(session) = current_state.session_map.get_mut(&id) {
-                println!("ice candidate: {ice_candidate:?}\n");
-
-                // let ice = serde_json::to_string(&ice_candidate).unwrap();
-
-               // println!("Pushing ice_candidate {:?} to caller_ice_candidates for Session Id {}\n", &ice, &id);
-
                 let ice_clone = ice_candidate.clone();
 
+                println!("Updating Session Id {} to have ice_candidate: {:?}\n", &id, &ice_candidate);
                 session.caller_ice_candidates.push(ice_candidate);
-                
-                ws.send(Message::text(ice_clone.as_str())).await;
+
+                // ws.send(Message::text(ice_clone.as_str())).await;
             } else {
-                println!("A session should be created before adding ice_candidates? Look into this! It's possible we need to have an initial join/start message\n");
+                println!("A session should be created before adding ice_candidates? Look into this!\n");
             } 
         },
         _ => {
-            println!("Got here!");
+            println!("Got here!\n");
         }
     }
 
@@ -106,24 +106,24 @@ async fn handle_connection(signal_state: Arc<Mutex<SignalState>>, tcp_stream: Tc
             Ok(Message::Text(text)) => {
                 // Handle text message
                 println!("Received text message: {}\n", text);
-                handle_message(Arc::clone(&signal_state), text, &mut outgoing).await;
+                handle_message(Arc::clone(&signal_state), text).await;
             },
             Ok(Message::Close(reason)) => {
                 // Handle close message
-                println!("Received close message. Reason: {:?}", reason);
+                println!("Received close message. Reason: {:?}\n", reason);
                 break;
             }
             Ok(_) => {
                 // Do nothing for the other Message types
             }
             Err(err) => {
-                println!("Error on addr {}, error: {:?}", &addr, &err);
+                println!("Error on addr {}, error: {:?}\n", &addr, &err);
                 break;
             },
         }
     }
 
-    println!("address {} has disconnected.", &addr);
+    println!("address {} has disconnected.\n", &addr);
 }
 
 #[tokio::main]
