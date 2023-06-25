@@ -18,12 +18,19 @@ pub enum SignalRequest {
     GetOffer {
         id: String,
     },
+    PeerIceCandidate {
+        id: String,
+        ice_candidate: String,
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SignalResponse {
     Offer {
+        sdp: String,
+    },
+    Answer {
         sdp: String,
     },
     IceCandidate {
