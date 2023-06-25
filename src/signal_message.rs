@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum SignalMessage {
+pub enum SignalRequest {
     Offer {
         id: String,
         sdp: String,
@@ -14,6 +14,20 @@ pub enum SignalMessage {
     CallerIceCandidate {
         id: String,
         ice_candidate: String,
-    }
+    },
+    GetOffer {
+        id: String,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SignalResponse {
+    Offer {
+        sdp: String,
+    },
+    IceCandidate {
+        ice_candidate: String,
+    },
 }
 

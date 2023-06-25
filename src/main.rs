@@ -10,7 +10,7 @@ use futures_util::stream::SplitSink;
 use tokio::sync::Mutex;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, WebSocketStream, tungstenite::Message};
-use crate::signal_message::SignalMessage;
+use crate::signal_message::{SignalRequest, SignalResponse};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -18,19 +18,19 @@ type Result<T> = std::result::Result<T, Error>;
 struct Session {
     // Caller Info
     pub offer: Option<String>,
-    pub caller_ws: Option<SplitSink<WebSocketStream<TcpStream>, Message>>,
+    pub caller_ws: Option<Arc<Mutex<SplitSink<WebSocketStream<TcpStream>, Message>>>>,
     pub caller_ice_candidates: Vec<String>,
     // Peer Info
     pub answer: Option<String>,
-    pub peer_ws: Option<SplitSink<WebSocketStream<TcpStream>, Message>>,
+    pub peer_ws: Option<Arc<Mutex<SplitSink<WebSocketStream<TcpStream>, Message>>>>,
     pub peer_ice_candidates: Vec<String>,
 }
 
 impl Session {
-    pub fn new(offer: String) -> Self {
+    pub fn new(offer: String, caller_ws: Arc<Mutex<SplitSink<WebSocketStream<TcpStream>, Message>>>) -> Self {
         Session {
             offer: Some(offer),
-            caller_ws: None,
+            caller_ws: Some(caller_ws),
             caller_ice_candidates: Vec::new(),
             answer: None,
             peer_ws: None,
@@ -52,38 +52,71 @@ impl SignalState {
     }
 }
 
-async fn handle_message(signal_state: Arc<Mutex<SignalState>>, message: String) -> Result<()> {
-    let signal_message: SignalMessage = serde_json::from_str(message.as_str())?;
+async fn handle_message(signal_state: Arc<Mutex<SignalState>>, message: String, ws: Arc<Mutex<SplitSink<WebSocketStream<TcpStream>, Message>>>) -> Result<()> {
+    let signal_message: SignalRequest = serde_json::from_str(message.as_str())?;
+
+    let mut current_state = signal_state.lock().await;
 
     match signal_message {
-        SignalMessage::Offer { id, sdp } => {
-            let mut current_state = signal_state.lock().await;
-
+        SignalRequest::Offer { id, sdp } => {
             if let Some(session) = current_state.session_map.get_mut(&id) {
-                println!("Updating Session Id {} from old_offer: {:?} to new_offer: {:?}\n", &id, &session.offer, &sdp);
+                println!("Updating Session Id {} from old_offer: {:?} to new_offer: {:?} this shouldn't really happen though?\n", &id, &session.offer, &sdp);
                 session.offer = Some(sdp);
             } else {
-                println!("Creating Session with Id {} and offer {}\n", &id, &sdp);
-                current_state.session_map.insert(id, Session::new(sdp));
+                println!("Creating Session with Id {} and offer {:?}\n", &id, &sdp);
+                current_state.session_map.insert(id, Session::new(sdp, Arc::clone(&ws)));
             }
         },
-        SignalMessage::Answer { id, sdp } => {
-
-
-        },
-        SignalMessage::CallerIceCandidate { id, ice_candidate } => {
-            let mut current_state = signal_state.lock().await;
-            
+        SignalRequest::GetOffer { id } => {
             if let Some(session) = current_state.session_map.get_mut(&id) {
-                let ice_clone = ice_candidate.clone();
+                // Since I'm hardcoding this Signal server technically I can just use the peer_ws instead of using the ws from the request, but either way this should work.
+                let mut request_ws = ws.lock().await;
+                
+                if let Some(offer) = &session.offer {
+                    println!("[GetOffer] Session Id {} exists and Offer exists. Sending offer: {:?}\n", &id, &offer);
 
+                    let offer_clone = offer.clone();
+                    let offer_response = SignalResponse::Offer { sdp: offer_clone};
+                    let offer_response_json = serde_json::to_string(&offer_response)?;
+
+                    request_ws.send(Message::text(offer_response_json)).await?;
+                }
+            }
+        },
+        SignalRequest::Answer { id, sdp } => {
+            if let Some(session) = current_state.session_map.get_mut(&id) {
+                println!("Updating Session Id {} to include answer: {:?}\n", &id, &sdp);
+                session.answer = Some(sdp);
+
+
+                // session.peer_ws = Some(Arc::clone(&ws));
+
+                // let mut caller_ws = &session.caller_ws.unwrap().lock().await;
+
+                // for ice_candidate in session.caller_ice_candidates {
+                //     let ice_clone = ice_candidate.clone();
+                //     let ice_response = SignalResponse::IceCandidate { ice_candidate: ice_clone};
+                //     let ice_response_json = serde_json::to_string(&ice_response)?;
+                    
+                //     caller_ws.send(Message::text(ice_response_json)).await;
+                // }
+            } else {
+                println!("Session should be created before sending an Answer");
+            }
+        },
+        SignalRequest::CallerIceCandidate { id, ice_candidate } => {
+            if let Some(session) = current_state.session_map.get_mut(&id) {
                 println!("Updating Session Id {} to have ice_candidate: {:?}\n", &id, &ice_candidate);
-                session.caller_ice_candidates.push(ice_candidate);
+                session.caller_ice_candidates.push(ice_candidate.clone());
 
-                // ws.send(Message::text(ice_clone.as_str())).await;
+                if let Some(caller_ws) = &session.caller_ws {
+                    let mut caller_ws = caller_ws.lock().await;
+
+                    caller_ws.send(Message::text(ice_candidate)).await?;
+                }
             } else {
                 println!("A session should be created before adding ice_candidates? Look into this!\n");
-            } 
+            }
         },
         _ => {
             println!("Got here!\n");
@@ -101,12 +134,14 @@ async fn handle_connection(signal_state: Arc<Mutex<SignalState>>, tcp_stream: Tc
 
     let (mut outgoing, mut incoming) = ws_stream.split();
 
+    let outgoing = Arc::new(Mutex::new(outgoing));
+
     while let Some(message) = incoming.next().await {
         match message {
             Ok(Message::Text(text)) => {
                 // Handle text message
                 println!("Received text message: {}\n", text);
-                handle_message(Arc::clone(&signal_state), text).await;
+                handle_message(Arc::clone(&signal_state), text, Arc::clone(&outgoing)).await;
             },
             Ok(Message::Close(reason)) => {
                 // Handle close message
@@ -140,10 +175,9 @@ async fn main() -> Result<()> {
         tokio::spawn(handle_connection(Arc::clone(&signal_state), stream, address));
     }
 
-
     // json_serialized = {"type":"caller_ice_candidate","id":"uid","ice_candidate":"ice_candidate"}
 
-    // let offer = SignalMessage::Offer {
+    // let offer = SignalRequest::Offer {
     //     id: String::from("uid"), 
     //     sdp: String::from("offer_info")
     // };
@@ -153,7 +187,7 @@ async fn main() -> Result<()> {
     // println!("json_serialized = {}", offer_json_serialized);
     // // json_serialized = {"type":"offer","id":"uid","sdp":"offer_info"}
 
-    // let answer = SignalMessage::Answer {
+    // let answer = SignalRequest::Answer {
     //     id: String::from("uid"), 
     //     sdp: String::from("answer_info")
     // };
