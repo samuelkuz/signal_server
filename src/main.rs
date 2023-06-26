@@ -199,36 +199,14 @@ async fn main() -> Result<()> {
     let signal_state: Arc<Mutex<SignalState>> = Arc::new(Mutex::new(SignalState::new()));
 
     // 1. Initialize  TCP listener to listen to requests to the Signaling Server
-    let address = "127.0.0.1:8080";
+    // Assigned to 0.0.0.0 while testing on local devices
+    let address = "0.0.0.0:8080";
     let listener = TcpListener::bind(&address).await.expect("Can't listen");
 
     // 2. Create a task for each new request, this will create the websocket + message handling
     while let Ok((stream, address)) = listener.accept().await {
         tokio::spawn(handle_connection(Arc::clone(&signal_state), stream, address));
     }
-
-    // json_serialized = {"type":"caller_ice_candidate","id":"uid","ice_candidate":"ice_candidate"}
-
-    // let offer = SignalRequest::Offer {
-    //     id: String::from("uid"), 
-    //     sdp: String::from("offer_info")
-    // };
-
-    // let offer_json_serialized = serde_json::to_string(&offer)?;
-
-    // println!("json_serialized = {}", offer_json_serialized);
-    // // json_serialized = {"type":"offer","id":"uid","sdp":"offer_info"}
-
-    // let answer = SignalRequest::Answer {
-    //     id: String::from("uid"), 
-    //     sdp: String::from("answer_info")
-    // };
-
-    // let answer_json_serialized = serde_json::to_string(&answer)?;
-
-    // println!("json_serialized = {}", answer_json_serialized);
-    // // json_serialized = {"type":"answer","id":"uid","sdp":"answer_info"}
-    
 
     Ok(())
 }
