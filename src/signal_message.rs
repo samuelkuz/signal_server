@@ -27,6 +27,9 @@ pub enum SignalRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SignalResponse {
+    Session {
+        id: String,
+    },
     Offer {
         sdp: String,
     },
@@ -36,5 +39,8 @@ pub enum SignalResponse {
     IceCandidate {
         ice_candidate: String,
     },
+    Close {
+        
+    }
 }
 

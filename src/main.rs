@@ -163,6 +163,8 @@ async fn handle_connection(signal_state: Arc<Mutex<SignalState>>, tcp_stream: Tc
         Ok(ws) => ws,
         Err(_) => return,
     };
+    
+    println!("address {} has connected.\n", &addr);
 
     let (outgoing, mut incoming) = ws_stream.split();
 
