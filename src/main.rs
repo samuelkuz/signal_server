@@ -57,14 +57,23 @@ async fn handle_message(signal_state: Arc<Mutex<SignalState>>, message: String, 
     let mut current_state = signal_state.lock().await;
 
     match signal_message {
-        SignalRequest::Offer { id, sdp } => {
-            if let Some(session) = current_state.session_map.get_mut(&id) {
-                println!("[Offer] Updating Session Id {} from old_offer: {:?} to new_offer: {:?} this shouldn't really happen though?\n", &id, &session.offer, &sdp);
-                session.offer = Some(sdp);
-            } else {
-                println!("[Offer] Creating Session with Id {} and offer {:?}\n", &id, &sdp);
-                current_state.session_map.insert(id, Session::new(sdp, Arc::clone(&ws)));
+        // When sending the signal server an offer a unique session id is generated and returned.
+        SignalRequest::Offer { sdp } => {
+            let mut session_id = uuid::Uuid::new_v4().to_string();
+
+            while current_state.session_map.contains_key(&session_id) {
+                session_id = uuid::Uuid::new_v4().to_string();
             }
+
+            println!("[Offer] Creating Session with Id {} and offer {:?}\n", &session_id, &sdp);
+            current_state.session_map.insert(session_id.clone(), Session::new(sdp, Arc::clone(&ws)));
+
+            // Send requester the unique sesion id
+            let mut requester_ws = ws.lock().await;
+            let id_response = SignalResponse::Session { id: session_id };
+            let id_response_json = serde_json::to_string(&id_response)?;
+
+            requester_ws.send(Message::text(id_response_json)).await?;
         },
         SignalRequest::CallerIceCandidate { id, ice_candidate } => {
             if let Some(session) = current_state.session_map.get_mut(&id) {
